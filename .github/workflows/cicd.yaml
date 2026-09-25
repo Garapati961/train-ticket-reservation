@@ -1,5 +1,5 @@
 name: ci/cd deploy to tomcat
-'on':
+on:
   push:
     branches:
       - master
