@@ -4,7 +4,7 @@ name: ci/cd deploy to tomcat
     branches:
       - master
 jobs:
-  build:
+  build-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: checkout repo
@@ -22,3 +22,11 @@ jobs:
         run: mvn test
       - name: package maven
         run: mvn package
+      - name: varify war filr
+        run:  ls -lh target/
+      - name: deploy war to tomcat
+        run: |
+              curl -v -u ${{secrets.TOMCAT_USER}}:{{secrets.TOMCAT_PASSWORD}}
+              -T target/TrainBook-1.0.0-SHANPSHOT.war\
+              "http://{{secrets.TOMCAT_HOST}}:8080/manager/text/deploy?path=/TrainBookupdate=true"
+      
