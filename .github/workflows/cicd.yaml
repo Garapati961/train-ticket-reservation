@@ -1,32 +1,52 @@
-name: ci/cd deploy to tomcat
+name: Build and Deploy train-ticket-reservation
+
 on:
   push:
     branches:
-      - master
+      - main
+  workflow_dispatch:
+
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: checkout repo
-        uses: actions/checkout@v5
-      - name: setup java@v5
-        uses: actions/setup-java@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'temurin'
-      - name: validate code
-        run: mvn validate
-      - name: compile code
-        run: mvn compile
-      - name: test code
-        run: mvn test
-      - name: package maven
-        run: mvn package
-      - name: varify war filr
-        run:  ls -lh target/
-      - name: deploy war to tomcat
+
+      - name: Build & Test with Maven
+        run: mvn clean verify
+
+      - name: Upload WAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: war-file
+          path: target/*.war
+
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: war-file
+
+      - name: Deploy to DEV
+        env:
+          URL: ${{ secrets.TOMCAT_HOST }}
+          USER: ${{ secrets.TOMCAT_USER }}
+          PASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
-              curl -v -u ${{secrets.TOMCAT_USER}}:${{secrets.TOMCAT_PASSWORD}} \
-                 -T target/TrainBook-1.0.0-SNAPSHOT.war \
-                 "http://${{secrets.TOMCAT_HOST}}:8080/manager/text/deploy?path=/TrainBook&update=true"
-      
+          WAR_FILE=$(ls *.war | head -n 1)
+          echo "Deploying $WAR_FILE to DEV ($URL)"
+          curl -u "$USER:$PASS" --fail -T "$WAR_FILE" \
+            "$URL/deploy?path=/train-ticket-reservation&update=true"
