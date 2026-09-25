@@ -1,1 +1,24 @@
-
+name: ci/cd deploy to tomcat
+'on':
+  push:
+    branches:
+      - master
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v5
+      - name: setup java@v5
+        uses: actions/setup-jdk@v5
+        with:
+          java-vertion: '17'
+          distribution: temurin
+      - name: validate code
+        run: mvn validate
+      - name: compile code
+        run: mvn compile
+      - name: test code
+        run: mvn test
+      - name: package maven
+        run: mvn package
