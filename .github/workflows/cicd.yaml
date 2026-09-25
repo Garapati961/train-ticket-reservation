@@ -12,7 +12,7 @@ jobs:
       - name: setup java@v5
         uses: actions/setup-java@v5
         with:
-          java-vertion: '17'
+          java-version: '17'
           distribution: temurin
       - name: validate code
         run: mvn validate
