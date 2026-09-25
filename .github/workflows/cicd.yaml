@@ -42,7 +42,7 @@ jobs:
 
       - name: Deploy to DEV
         env:
-          URL: ${{ secrets.TOMCAT_HOST_URL }}
+          URL: ${{ secrets.TOMCAT_HOST }}
           USER: ${{ secrets.TOMCAT_USER }}
           PASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
