@@ -7,6 +7,10 @@ on:
   workflow_dispatch:
 
 jobs:
+
+  # =========================
+  # BUILD
+  # =========================
   build:
     runs-on: ubuntu-latest
 
@@ -14,14 +18,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: maven
 
-      - name: Build & Test with Maven
+      - name: Build and Test with Maven
         run: mvn clean verify
+
+      - name: Check WAR file
+        run: ls -lh target/*.war
 
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
@@ -30,6 +38,9 @@ jobs:
           path: target/*.war
 
 
+  # =========================
+  # DEPLOY TO DEV
+  # =========================
   deploy-dev:
     needs: build
     runs-on: ubuntu-latest
@@ -39,16 +50,28 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: war-file
+          path: ./artifact
 
-      - name: Deploy to DEV
+      - name: Check downloaded WAR
+        run: ls -lh ./artifact/*.war
+
+      - name: Deploy to Tomcat DEV
         env:
-          URL: ${{ secrets.TOMCAT_HOST }}
-          USER: ${{ secrets.TOMCAT_USER }}
-          PASS: ${{ secrets.TOMCAT_PASSWORD }}
+          TOMCAT_URL: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
+          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
+
         run: |
-          WAR_FILE=$(ls *.war | head -n 1)
-          echo "Deploying $WAR_FILE to DEV ($URL)"
-          curl -u "$USER:$PASS" --fail -T "$WAR_FILE" \
-            "$URL/deploy?path=/train-ticket-reservation&update=true"
+          set -e
 
+          WAR_FILE=$(find ./artifact -name "*.war" -type f | head -n 1)
 
+          echo "WAR file: $WAR_FILE"
+          echo "Tomcat URL: $TOMCAT_URL"
+
+          curl --fail --show-error --silent \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T "$WAR_FILE" \
+            "$TOMCAT_URL/deploy?path=/train-ticket-reservation&update=true"
+
+          echo "Deployment successful!"
