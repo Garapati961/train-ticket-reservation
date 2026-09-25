@@ -10,9 +10,9 @@ jobs:
       - name: checkout repo
         uses: actions/checkout@v5
       - name: setup java@v5
-        uses: actions/setup-jdk@v5
+        uses: actions/setup-java@v5
         with:
-          java-vertion: '21'
+          java-vertion: '17'
           distribution: temurin
       - name: validate code
         run: mvn validate
