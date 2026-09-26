@@ -1,4 +1,4 @@
-name: Build and Deploy Train Ticket Reservation
+name: Build and Deploy
 
 on:
   push:
@@ -8,11 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-and-deploy:
 
-  # =========================
-  # BUILD
-  # =========================
-  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,63 +22,22 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: maven
 
       - name: Build WAR
         run: mvn clean package
+      - name: verify war
+        run: ls -lh target/
+        
 
-      - name: Check WAR File
-        run: |
-          echo "WAR files:"
-          ls -lh target/*.war
-
-      - name: Upload WAR Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: train-ticket-war
-          path: target/*.war
-
-
-  # =========================
-  # DEPLOY
-  # =========================
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Download WAR Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: train-ticket-war
-          path: artifact
-
-      - name: Check WAR File
-        run: |
-          echo "Downloaded WAR:"
-          ls -lh artifact/*.war
-
-      - name: Deploy to Tomcat
+      - name: Deploy WAR
         env:
           TOMCAT_URL: ${{ secrets.TOMCAT_URL }}
           TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
           TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
 
         run: |
-
-          set -e
-
-          WAR_FILE=$(find ./artifact -name "*.war" -type f | head -n 1)
-
-          echo "WAR file found:"
-          echo "$WAR_FILE"
-
-          echo "Deploying to Tomcat..."
-
-          curl --fail --show-error --silent \
-            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            -T "$WAR_FILE" \
+          curl -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T target/TrainBook-1.0.0-SNAPSHOT.war \
             "$TOMCAT_URL/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "Deployment successful!"
+          echo "Deployment completed"
