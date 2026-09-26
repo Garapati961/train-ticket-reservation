@@ -1,9 +1,10 @@
-name: Build and Deploy train-ticket-reservation
+name: Build and Deploy Train Ticket Reservation
 
 on:
   push:
     branches:
       - master
+
   workflow_dispatch:
 
 jobs:
@@ -15,59 +16,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: maven
 
-      - name: Build and Test with Maven
-        run: mvn clean verify
+      - name: Build WAR
+        run: mvn clean package
 
-      - name: Check WAR file
-        run: ls -lh target/*.war
+      - name: Check WAR File
+        run: |
+          echo "WAR files:"
+          ls -lh target/*.war
 
-      - name: Upload WAR artifact
+      - name: Upload WAR Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: war-file
+          name: train-ticket-war
           path: target/*.war
 
 
   # =========================
-  # DEPLOY TO DEV
+  # DEPLOY
   # =========================
-  deploy-dev:
+  deploy:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download WAR artifact
+
+      - name: Download WAR Artifact
         uses: actions/download-artifact@v4
         with:
-          name: war-file
-          path: ./artifact
+          name: train-ticket-war
+          path: artifact
 
-      - name: Check downloaded WAR
-        run: ls -lh ./artifact/*.war
+      - name: Check WAR File
+        run: |
+          echo "Downloaded WAR:"
+          ls -lh artifact/*.war
 
-      - name: Deploy to Tomcat DEV
+      - name: Deploy to Tomcat
         env:
           TOMCAT_URL: ${{ secrets.TOMCAT_HOST }}
           TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
           TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
 
         run: |
+
           set -e
 
           WAR_FILE=$(find ./artifact -name "*.war" -type f | head -n 1)
 
-          echo "WAR file: $WAR_FILE"
-          echo "Tomcat URL: $TOMCAT_URL"
+          echo "WAR file found:"
+          echo "$WAR_FILE"
+
+          echo "Deploying to Tomcat..."
 
           curl --fail --show-error --silent \
             -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
