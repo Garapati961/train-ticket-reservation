@@ -64,7 +64,7 @@ jobs:
 
       - name: Deploy to Tomcat
         env:
-          TOMCAT_URL: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_URL: ${{ secrets.TOMCAT_URL }}
           TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
           TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
 
