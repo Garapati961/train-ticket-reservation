@@ -37,3 +37,7 @@ jobs:
           curl -u "${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}" \
             --upload-file target/*.war \
             "${{ secrets.TOMCAT_URL }}/manager/text/deploy?path=/myapp&update=true"
+
+
+
+            
