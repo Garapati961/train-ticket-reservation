@@ -1,4 +1,3 @@
-
 name: Maven Build SonarQube Tomcat Deployment
 
 on:
@@ -8,16 +7,12 @@ on:
 
 jobs:
   build-sonar-deploy:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      # Checkout source code
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -25,20 +20,17 @@ jobs:
           java-version: '17'
           cache: maven
 
-      # Maven Build
       - name: Maven Build
         run: mvn clean package
 
-      # SonarQube Analysis
       - name: SonarQube Analysis
         run: |
           mvn sonar:sonar \
             -Dsonar.projectKey=my-maven-project \
-            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" \
+            -Dsonar.token="${{ secrets.SONAR_TOKEN }}"
 
-      # Deploy WAR file to Tomcat
-      - name: Deploy to Tomcat
+      - name: Deploy WAR to Tomcat
         run: |
           curl -u "${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}" \
             --upload-file target/*.war \
