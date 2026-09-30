@@ -3,7 +3,7 @@ name: Maven Build SonarQube Tomcat Deployment
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   build-sonar-deploy:
