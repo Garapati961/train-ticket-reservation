@@ -1,31 +1,29 @@
-name: ci/cd deploy to tomcat
-'on':
+name: Maven SonarQube
+
+on:
   push:
     branches:
-      - master
+      - main
+
 jobs:
-  build-deploy:
+  sonar:
     runs-on: ubuntu-latest
+
     steps:
-      - name: checkout repo
-        uses: actions/checkout@v5
-      - name: setup java@v5
-        uses: actions/setup-java@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: temurin
-      - name: validate code
-        run: mvn validate
-      - name: compile code
-        run: mvn compile
-      - name: test code
-        run: mvn test
-      - name: package maven
-        run: mvn package
-      - name: varify war filr
-        run:  ls -lh target/
-      - name: deploy war to tomcat
-        run: |
-              curl -u "${{secrets.TOMCAT_USER}}:{{secrets.TOMCAT_PASSWORD}}"
-                   -T target/TrainBook-1.0.0-SHANPSHOT.war\
-                   "http://{{secrets.TOMCAT_URL}}:8080/manager/text/deploy?path=/TrainBookupdate=true"
+          java-version: '17'
+          cache: maven
+
+      - name: Maven Build
+        run: mvn clean package
+      - run: |
+              mvn sonar:sonar \
+                -Dsonar.projectKey=my-maven-project \
+                -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+                -Dsonar.token=${{ secrets.SONAR_TOKEN }}
