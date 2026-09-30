@@ -3,13 +3,14 @@ name: Maven Build SonarQube Tomcat Deployment
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   build-sonar-deploy:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -25,7 +26,7 @@ jobs:
 
       - name: SonarQube Analysis
         run: |
-          mvn sonar:sonar \
+          mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
             -Dsonar.projectKey=my-maven-project \
             -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" \
             -Dsonar.token="${{ secrets.SONAR_TOKEN }}"
