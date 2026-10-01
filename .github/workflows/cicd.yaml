@@ -365,7 +365,6 @@ jobs:
 
             sleep 5
           done
-
           echo "PRODUCTION deployment health check failed."
           sudo systemctl status tomcat10 --no-pager || true
 
