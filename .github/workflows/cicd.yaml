@@ -1,5 +1,5 @@
 
-name: Train Ticket Reservation - Multi Environment Deployment
+name: Train Ticket Reservation - Multi Environment CI/CD
 
 on:
   push:
@@ -7,27 +7,18 @@ on:
       - master
 
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Select deployment environment"
-        required: true
-        type: choice
-        options:
-          - dev
-          - test
-          - pre-production
-          - production
 
 jobs:
 
-  # ==========================================================
+  # ============================================================
   # BUILD
-  # ==========================================================
+  # ============================================================
   build:
-    name: Build WAR
+    name: Build Application
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout source code
         uses: actions/checkout@v4
 
@@ -38,54 +29,105 @@ jobs:
           java-version: "17"
           cache: maven
 
-      - name: Build application
+      - name: Check Java version
         run: |
+          java -version
+          mvn -version
+
+      - name: Build WAR
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Building Train Ticket Reservation"
+          echo "========================================="
+
           mvn clean package -DskipTests
 
       - name: Find WAR file
         run: |
-          echo "WAR files generated:"
-          find target -name "*.war" -type f
+          echo "Generated WAR files:"
+          find target -type f -name "*.war"
 
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: train-ticket-war
+          name: train-ticket-reservation-war
           path: target/*.war
 
 
-  # ==========================================================
+  # ============================================================
   # DEV
-  # ==========================================================
+  # ============================================================
   deploy-dev:
     name: Deploy to DEV
     needs: build
-    if: |
-      github.event_name == 'push' ||
-      github.event.inputs.environment == 'dev'
-
     runs-on: ubuntu-latest
 
     environment:
       name: dev
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-war
+          name: train-ticket-reservation-war
           path: deployment
 
-      - name: Rename WAR
+      - name: Prepare WAR
         run: |
-          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          set -e
+
+          WAR_FILE=$(find deployment -type f -name "*.war" | head -1)
+
+          if [ -z "$WAR_FILE" ]; then
+            echo "ERROR: WAR file not found"
+            exit 1
+          fi
+
           mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy WAR to DEV Tomcat
+          echo "WAR file prepared:"
+          ls -lh deployment/train-ticket-reservation.war
+
+      - name: Test DEV Tomcat
         env:
           TOMCAT_USER: ${{ secrets.tomcat_user }}
           TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
           TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Testing DEV Tomcat"
+          echo "========================================="
+
+          echo "Tomcat Host: $TOMCAT_HOST"
+
+          HTTP_CODE=$(curl -s \
+            -o /tmp/tomcat_response.txt \
+            -w "%{http_code}" \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            "http://$TOMCAT_HOST:8080/manager/text/list")
+
+          echo "Tomcat HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: DEV Tomcat authentication failed"
+            cat /tmp/tomcat_response.txt
+            exit 1
+          fi
+
+          echo "DEV Tomcat authentication successful."
+
+      - name: Deploy to DEV Tomcat
+        env:
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
         run: |
           set -e
 
@@ -95,45 +137,86 @@ jobs:
 
           echo "Tomcat Host: $TOMCAT_HOST"
 
-          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            -T deployment/train-ticket-reservation.war \
+          curl --fail --show-error \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            --upload-file deployment/train-ticket-reservation.war \
             "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "DEV deployment completed successfully."
+          echo ""
+          echo "========================================="
+          echo "DEV Deployment Successful"
+          echo "========================================="
 
 
-  # ==========================================================
+  # ============================================================
   # TEST
-  # ==========================================================
+  # ============================================================
   deploy-test:
     name: Deploy to TEST
     needs: deploy-dev
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.environment == 'test'
-
     runs-on: ubuntu-latest
 
     environment:
       name: test
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-war
+          name: train-ticket-reservation-war
           path: deployment
 
-      - name: Rename WAR
+      - name: Prepare WAR
         run: |
-          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          set -e
+
+          WAR_FILE=$(find deployment -type f -name "*.war" | head -1)
+
+          if [ -z "$WAR_FILE" ]; then
+            echo "ERROR: WAR file not found"
+            exit 1
+          fi
+
           mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy WAR to TEST Tomcat
+      - name: Test TEST Tomcat
         env:
           TOMCAT_USER: ${{ secrets.tomcat_user }}
           TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
           TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Testing TEST Tomcat"
+          echo "========================================="
+
+          echo "Tomcat Host: $TOMCAT_HOST"
+
+          HTTP_CODE=$(curl -s \
+            -o /tmp/tomcat_response.txt \
+            -w "%{http_code}" \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            "http://$TOMCAT_HOST:8080/manager/text/list")
+
+          echo "Tomcat HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: TEST Tomcat authentication failed"
+            cat /tmp/tomcat_response.txt
+            exit 1
+          fi
+
+          echo "TEST Tomcat authentication successful."
+
+      - name: Deploy to TEST Tomcat
+        env:
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
         run: |
           set -e
 
@@ -143,45 +226,86 @@ jobs:
 
           echo "Tomcat Host: $TOMCAT_HOST"
 
-          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            -T deployment/train-ticket-reservation.war \
+          curl --fail --show-error \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            --upload-file deployment/train-ticket-reservation.war \
             "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "TEST deployment completed successfully."
+          echo ""
+          echo "========================================="
+          echo "TEST Deployment Successful"
+          echo "========================================="
 
 
-  # ==========================================================
+  # ============================================================
   # PRE-PRODUCTION
-  # ==========================================================
+  # ============================================================
   deploy-pre-production:
     name: Deploy to PRE-PRODUCTION
     needs: deploy-test
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.environment == 'pre-production'
-
     runs-on: ubuntu-latest
 
     environment:
       name: pre-production
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-war
+          name: train-ticket-reservation-war
           path: deployment
 
-      - name: Rename WAR
+      - name: Prepare WAR
         run: |
-          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          set -e
+
+          WAR_FILE=$(find deployment -type f -name "*.war" | head -1)
+
+          if [ -z "$WAR_FILE" ]; then
+            echo "ERROR: WAR file not found"
+            exit 1
+          fi
+
           mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy WAR to PRE-PRODUCTION Tomcat
+      - name: Test PRE-PRODUCTION Tomcat
         env:
           TOMCAT_USER: ${{ secrets.tomcat_user }}
           TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
           TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Testing PRE-PRODUCTION Tomcat"
+          echo "========================================="
+
+          echo "Tomcat Host: $TOMCAT_HOST"
+
+          HTTP_CODE=$(curl -s \
+            -o /tmp/tomcat_response.txt \
+            -w "%{http_code}" \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            "http://$TOMCAT_HOST:8080/manager/text/list")
+
+          echo "Tomcat HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: PRE-PRODUCTION Tomcat authentication failed"
+            cat /tmp/tomcat_response.txt
+            exit 1
+          fi
+
+          echo "PRE-PRODUCTION Tomcat authentication successful."
+
+      - name: Deploy to PRE-PRODUCTION Tomcat
+        env:
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
         run: |
           set -e
 
@@ -192,45 +316,86 @@ jobs:
 
           echo "Tomcat Host: $TOMCAT_HOST"
 
-          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            -T deployment/train-ticket-reservation.war \
+          curl --fail --show-error \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            --upload-file deployment/train-ticket-reservation.war \
             "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "PRE-PRODUCTION deployment completed successfully."
+          echo ""
+          echo "========================================="
+          echo "PRE-PRODUCTION Deployment Successful"
+          echo "========================================="
 
 
-  # ==========================================================
+  # ============================================================
   # PRODUCTION
-  # ==========================================================
+  # ============================================================
   deploy-production:
     name: Deploy to PRODUCTION
     needs: deploy-pre-production
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.environment == 'production'
-
     runs-on: ubuntu-latest
 
     environment:
       name: production
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-war
+          name: train-ticket-reservation-war
           path: deployment
 
-      - name: Rename WAR
+      - name: Prepare WAR
         run: |
-          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          set -e
+
+          WAR_FILE=$(find deployment -type f -name "*.war" | head -1)
+
+          if [ -z "$WAR_FILE" ]; then
+            echo "ERROR: WAR file not found"
+            exit 1
+          fi
+
           mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy WAR to PRODUCTION Tomcat
+      - name: Test PRODUCTION Tomcat
         env:
           TOMCAT_USER: ${{ secrets.tomcat_user }}
           TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
           TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Testing PRODUCTION Tomcat"
+          echo "========================================="
+
+          echo "Tomcat Host: $TOMCAT_HOST"
+
+          HTTP_CODE=$(curl -s \
+            -o /tmp/tomcat_response.txt \
+            -w "%{http_code}" \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            "http://$TOMCAT_HOST:8080/manager/text/list")
+
+          echo "Tomcat HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: PRODUCTION Tomcat authentication failed"
+            cat /tmp/tomcat_response.txt
+            exit 1
+          fi
+
+          echo "PRODUCTION Tomcat authentication successful."
+
+      - name: Deploy to PRODUCTION Tomcat
+        env:
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
+
         run: |
           set -e
 
@@ -241,8 +406,12 @@ jobs:
 
           echo "Tomcat Host: $TOMCAT_HOST"
 
-          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            -T deployment/train-ticket-reservation.war \
+          curl --fail --show-error \
+            -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            --upload-file deployment/train-ticket-reservation.war \
             "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "PRODUCTION deployment completed successfully."
+          echo ""
+          echo "========================================="
+          echo "PRODUCTION Deployment Successful"
+          echo "========================================="
