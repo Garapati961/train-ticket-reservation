@@ -3,7 +3,7 @@ name: International-train-ticket Multi-Environment CI/CD
 on:
   push:
     branches:
-      - main
+      - master
 permissions:
   contents: read
 
