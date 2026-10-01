@@ -246,4 +246,3 @@ jobs:
             "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
           echo "PRODUCTION deployment completed successfully."
-```
