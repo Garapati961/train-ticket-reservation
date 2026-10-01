@@ -1,4 +1,3 @@
-
 name: Train-Ticket-Reservation Multi-Environment CI/CD
 
 on:
@@ -11,14 +10,15 @@ permissions:
 
 jobs:
 
-  # ==================================================
+  # ==========================================================
   # BUILD AND TEST
-  # ==================================================
+  # ==========================================================
   build:
     name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout source
         uses: actions/checkout@v4
 
@@ -29,30 +29,46 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build and test
-        run: mvn -B clean package
+      - name: Build and Test
+        run: |
+          mvn -B clean package
 
-      - name: Prepare WAR
+      - name: Find and Prepare WAR
         run: |
           set -e
-          WAR=$(find target -maxdepth 1 -type f -name '*.war' | head -n 1)
-          test -n "$WAR"
+
+          echo "Checking generated WAR..."
+
+          WAR=$(find target -maxdepth 1 -type f -name "*.war" | head -n 1)
+
+          if [ -z "$WAR" ]; then
+            echo "ERROR: WAR file not found!"
+            ls -la target/
+            exit 1
+          fi
+
+          echo "WAR found: $WAR"
+
           mkdir -p artifact
+
           cp "$WAR" artifact/train-ticket-reservation.war
+
+          echo "Prepared WAR:"
           ls -lh artifact/train-ticket-reservation.war
 
-      - name: Upload WAR artifact
+      - name: Upload WAR Artifact
         uses: actions/upload-artifact@v4
         with:
           name: train-ticket-war
           path: artifact/train-ticket-reservation.war
           retention-days: 7
 
-  # ==================================================
+
+  # ==========================================================
   # DEV
-  # ==================================================
+  # ==========================================================
   deploy-dev:
-    name: Deploy to DEV
+    name: Deploy → DEV
     needs: build
     runs-on: ubuntu-latest
 
@@ -60,6 +76,7 @@ jobs:
       name: dev
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
@@ -71,60 +88,92 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
-      - name: Configure SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-
       - name: Deploy to DEV
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           SSHPASS: ${{ secrets.EC2_PASSWORD }}
+        shell: bash
         run: |
           set -e
 
-          echo "Deploying to DEV..."
+          echo "========================================="
+          echo "Deploying Train Ticket Reservation to DEV"
+          echo "========================================="
+
+          echo "Copying WAR to EC2..."
 
           sshpass -e scp \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
             "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
+          echo "WAR copied successfully."
+
+          echo "Connecting to EC2..."
+
           sshpass -e ssh \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
+            -o StrictHostKeyChecking=no \
+            "$EC2_USER@$EC2_HOST" \
+            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+
           set -e
 
-          sudo systemctl stop tomcat10
+          echo "Stopping Tomcat..."
 
-          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
-          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
 
-          sudo cp /tmp/train-ticket-reservation.war \
+          echo "Removing old deployment..."
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
+            /var/lib/tomcat10/webapps/train-ticket-reservation
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -f \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          sudo systemctl start tomcat10
+          echo "Installing new WAR..."
 
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+          echo "$SUDO_PASSWORD" | sudo -S cp \
+            /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+
+          echo "Starting Tomcat..."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+
+          echo "Waiting for application..."
+
+          for i in {1..12}
+          do
+            if curl -fsS \
+              http://localhost:8080/train-ticket-reservation/ \
+              > /dev/null
+            then
+              echo "========================================="
               echo "DEV deployment successful"
+              echo "========================================="
               exit 0
             fi
+
+            echo "Waiting for Tomcat... attempt $i/12"
+
             sleep 5
           done
 
-          sudo systemctl status tomcat10 --no-pager || true
+          echo "DEV health check failed."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+
           exit 1
+
           EOF
 
-  # ==================================================
+
+  # ==========================================================
   # TEST
-  # ==================================================
+  # ==========================================================
   deploy-test:
-    name: Deploy to TEST
+    name: Deploy → TEST
     needs: deploy-dev
     runs-on: ubuntu-latest
 
@@ -132,6 +181,7 @@ jobs:
       name: test
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
@@ -143,60 +193,90 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
-      - name: Configure SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-
       - name: Deploy to TEST
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           SSHPASS: ${{ secrets.EC2_PASSWORD }}
+        shell: bash
         run: |
           set -e
 
-          echo "Deploying to TEST..."
+          echo "========================================="
+          echo "Deploying Train Ticket Reservation to TEST"
+          echo "========================================="
+
+          echo "Copying WAR to EC2..."
 
           sshpass -e scp \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
             "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
+          echo "WAR copied successfully."
+
           sshpass -e ssh \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
+            -o StrictHostKeyChecking=no \
+            "$EC2_USER@$EC2_HOST" \
+            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+
           set -e
 
-          sudo systemctl stop tomcat10
+          echo "Stopping Tomcat..."
 
-          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
-          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
 
-          sudo cp /tmp/train-ticket-reservation.war \
+          echo "Removing old deployment..."
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
+            /var/lib/tomcat10/webapps/train-ticket-reservation
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -f \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          sudo systemctl start tomcat10
+          echo "Installing new WAR..."
 
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+          echo "$SUDO_PASSWORD" | sudo -S cp \
+            /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+
+          echo "Starting Tomcat..."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+
+          echo "Waiting for application..."
+
+          for i in {1..12}
+          do
+            if curl -fsS \
+              http://localhost:8080/train-ticket-reservation/ \
+              > /dev/null
+            then
+              echo "========================================="
               echo "TEST deployment successful"
+              echo "========================================="
               exit 0
             fi
+
+            echo "Waiting for Tomcat... attempt $i/12"
+
             sleep 5
           done
 
-          sudo systemctl status tomcat10 --no-pager || true
+          echo "TEST health check failed."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+
           exit 1
+
           EOF
 
-  # ==================================================
+
+  # ==========================================================
   # PRE-PRODUCTION
-  # ==================================================
+  # ==========================================================
   deploy-preprod:
-    name: Deploy to PRE-PROD
+    name: Deploy → PRE-PROD
     needs: deploy-test
     runs-on: ubuntu-latest
 
@@ -204,6 +284,7 @@ jobs:
       name: pre-production
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
@@ -215,60 +296,90 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
-      - name: Configure SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-
       - name: Deploy to PRE-PROD
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           SSHPASS: ${{ secrets.EC2_PASSWORD }}
+        shell: bash
         run: |
           set -e
 
-          echo "Deploying to PRE-PROD..."
+          echo "========================================="
+          echo "Deploying Train Ticket Reservation to PRE-PROD"
+          echo "========================================="
+
+          echo "Copying WAR to EC2..."
 
           sshpass -e scp \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
             "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
+          echo "WAR copied successfully."
+
           sshpass -e ssh \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
+            -o StrictHostKeyChecking=no \
+            "$EC2_USER@$EC2_HOST" \
+            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+
           set -e
 
-          sudo systemctl stop tomcat10
+          echo "Stopping Tomcat..."
 
-          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
-          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
 
-          sudo cp /tmp/train-ticket-reservation.war \
+          echo "Removing old deployment..."
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
+            /var/lib/tomcat10/webapps/train-ticket-reservation
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -f \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          sudo systemctl start tomcat10
+          echo "Installing new WAR..."
 
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+          echo "$SUDO_PASSWORD" | sudo -S cp \
+            /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+
+          echo "Starting Tomcat..."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+
+          echo "Waiting for application..."
+
+          for i in {1..12}
+          do
+            if curl -fsS \
+              http://localhost:8080/train-ticket-reservation/ \
+              > /dev/null
+            then
+              echo "========================================="
               echo "PRE-PROD deployment successful"
+              echo "========================================="
               exit 0
             fi
+
+            echo "Waiting for Tomcat... attempt $i/12"
+
             sleep 5
           done
 
-          sudo systemctl status tomcat10 --no-pager || true
+          echo "PRE-PROD health check failed."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+
           exit 1
+
           EOF
 
-  # ==================================================
+
+  # ==========================================================
   # PRODUCTION
-  # ==================================================
+  # ==========================================================
   deploy-production:
-    name: Deploy to PRODUCTION
+    name: Deploy → PRODUCTION
     needs: deploy-preprod
     runs-on: ubuntu-latest
 
@@ -276,6 +387,7 @@ jobs:
       name: production
 
     steps:
+
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
@@ -287,51 +399,80 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
-      - name: Configure SSH
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-
       - name: Deploy to PRODUCTION
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           SSHPASS: ${{ secrets.EC2_PASSWORD }}
+        shell: bash
         run: |
           set -e
 
-          echo "Deploying to PRODUCTION..."
+          echo "========================================="
+          echo "Deploying Train Ticket Reservation to PRODUCTION"
+          echo "========================================="
+
+          echo "Copying WAR to EC2..."
 
           sshpass -e scp \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
             "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
+          echo "WAR copied successfully."
+
           sshpass -e ssh \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
+            -o StrictHostKeyChecking=no \
+            "$EC2_USER@$EC2_HOST" \
+            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+
           set -e
 
-          sudo systemctl stop tomcat10
+          echo "Stopping Tomcat..."
 
-          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
-          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
 
-          sudo cp /tmp/train-ticket-reservation.war \
+          echo "Removing old deployment..."
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
+            /var/lib/tomcat10/webapps/train-ticket-reservation
+
+          echo "$SUDO_PASSWORD" | sudo -S rm -f \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          sudo systemctl start tomcat10
+          echo "Installing new WAR..."
 
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+          echo "$SUDO_PASSWORD" | sudo -S cp \
+            /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+
+          echo "Starting Tomcat..."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+
+          echo "Waiting for application..."
+
+          for i in {1..12}
+          do
+            if curl -fsS \
+              http://localhost:8080/train-ticket-reservation/ \
+              > /dev/null
+            then
+              echo "========================================="
               echo "PRODUCTION deployment successful"
+              echo "========================================="
               exit 0
             fi
+
+            echo "Waiting for Tomcat... attempt $i/12"
+
             sleep 5
           done
 
-          sudo systemctl status tomcat10 --no-pager || true
+          echo "PRODUCTION health check failed."
+
+          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+
           exit 1
+
           EOF
