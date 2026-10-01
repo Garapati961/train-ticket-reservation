@@ -1,4 +1,4 @@
-name: CineVault Multi-Environment CI/CD
+name: International-train-ticket Multi-Environment CI/CD
 
 on:
   push:
