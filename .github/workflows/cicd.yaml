@@ -1,76 +1,68 @@
 
-name: Train Ticket Reservation - Multi Environment
+name: Train Ticket Reservation - Multi Environment Deployment
 
 on:
   push:
     branches:
       - master
-      - develop
-      - qa
 
   workflow_dispatch:
     inputs:
       environment:
-        description: "Select Environment"
+        description: "Select deployment environment"
         required: true
         type: choice
         options:
           - dev
-          - qa
-          - prod
+          - test
+          - pre-production
+          - production
 
 jobs:
 
-  # ============================================================
+  # ==========================================================
   # BUILD
-  # ============================================================
-
+  # ==========================================================
   build:
     name: Build WAR
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout
+      - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Setup Java 8
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '8'
+          java-version: "17"
           cache: maven
 
-      - name: Build Application
+      - name: Build application
         run: |
           mvn clean package -DskipTests
 
-      - name: Verify WAR
+      - name: Find WAR file
         run: |
-          echo "Generated WAR files:"
-          ls -lh target/*.war
+          echo "WAR files generated:"
+          find target -name "*.war" -type f
 
-      - name: Upload WAR
+      - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: train-ticket-reservation-war
+          name: train-ticket-war
           path: target/*.war
 
 
-  # ============================================================
+  # ==========================================================
   # DEV
-  # ============================================================
-
+  # ==========================================================
   deploy-dev:
-    name: Deploy DEV
+    name: Deploy to DEV
     needs: build
-
     if: |
-      github.ref == 'refs/heads/develop' ||
-      (
-        github.event_name == 'workflow_dispatch' &&
-        github.event.inputs.environment == 'dev'
-      )
+      github.event_name == 'push' ||
+      github.event.inputs.environment == 'dev'
 
     runs-on: ubuntu-latest
 
@@ -78,288 +70,180 @@ jobs:
       name: dev
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-reservation-war
+          name: train-ticket-war
+          path: deployment
 
-      - name: Install sshpass
+      - name: Rename WAR
         run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy to DEV Tomcat
+      - name: Deploy WAR to DEV Tomcat
         env:
-          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
-          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
-          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
-
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
         run: |
-
           set -e
 
           echo "========================================="
-          echo "Deploying to DEV"
+          echo "Deploying Train Ticket Reservation to DEV"
           echo "========================================="
 
-          WAR_FILE=$(find . -maxdepth 1 -name "*.war" | head -1)
+          echo "Tomcat Host: $TOMCAT_HOST"
 
-          if [ -z "$WAR_FILE" ]; then
-            echo "ERROR: WAR file not found"
-            exit 1
-          fi
-
-          echo "WAR file: $WAR_FILE"
-
-          echo "Testing SSH connection..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" \
-            "echo SSH connection successful"
-
-          echo "Copying WAR..."
-
-          sshpass -p "$TOMCAT_PASSWORD" scp \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$WAR_FILE" \
-            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
-
-          echo "Deploying WAR to Tomcat..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" << 'EOF'
-
-            set -e
-
-            sudo systemctl stop tomcat || true
-
-            sudo rm -rf /opt/tomcat/webapps/train-ticket-reservation
-
-            sudo rm -f /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo mv \
-              /tmp/train-ticket-reservation.war \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo chown tomcat:tomcat \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo systemctl start tomcat
-
-            sleep 10
-
-            sudo systemctl status tomcat --no-pager
-
-          EOF
+          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T deployment/train-ticket-reservation.war \
+            "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
           echo "DEV deployment completed successfully."
 
 
-  # ============================================================
-  # QA
-  # ============================================================
-
-  deploy-qa:
-    name: Deploy QA
+  # ==========================================================
+  # TEST
+  # ==========================================================
+  deploy-test:
+    name: Deploy to TEST
     needs: deploy-dev
-
     if: |
-      github.ref == 'refs/heads/qa' ||
-      (
-        github.event_name == 'workflow_dispatch' &&
-        github.event.inputs.environment == 'qa'
-      )
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.environment == 'test'
 
     runs-on: ubuntu-latest
 
     environment:
-      name: qa
+      name: test
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-reservation-war
+          name: train-ticket-war
+          path: deployment
 
-      - name: Install sshpass
+      - name: Rename WAR
         run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy to QA Tomcat
+      - name: Deploy WAR to TEST Tomcat
         env:
-          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
-          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
-          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
-
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
         run: |
-
           set -e
 
           echo "========================================="
-          echo "Deploying to QA"
+          echo "Deploying Train Ticket Reservation to TEST"
           echo "========================================="
 
-          WAR_FILE=$(find . -maxdepth 1 -name "*.war" | head -1)
+          echo "Tomcat Host: $TOMCAT_HOST"
 
-          if [ -z "$WAR_FILE" ]; then
-            echo "ERROR: WAR file not found"
-            exit 1
-          fi
+          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T deployment/train-ticket-reservation.war \
+            "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "Testing SSH connection..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" \
-            "echo SSH connection successful"
-
-          echo "Copying WAR..."
-
-          sshpass -p "$TOMCAT_PASSWORD" scp \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$WAR_FILE" \
-            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
-
-          echo "Deploying WAR..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" << 'EOF'
-
-            set -e
-
-            sudo systemctl stop tomcat || true
-
-            sudo rm -rf /opt/tomcat/webapps/train-ticket-reservation
-
-            sudo rm -f /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo mv \
-              /tmp/train-ticket-reservation.war \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo chown tomcat:tomcat \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo systemctl start tomcat
-
-            sleep 10
-
-            sudo systemctl status tomcat --no-pager
-
-          EOF
-
-          echo "QA deployment completed successfully."
+          echo "TEST deployment completed successfully."
 
 
-  # ============================================================
+  # ==========================================================
+  # PRE-PRODUCTION
+  # ==========================================================
+  deploy-pre-production:
+    name: Deploy to PRE-PRODUCTION
+    needs: deploy-test
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.environment == 'pre-production'
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pre-production
+
+    steps:
+      - name: Download WAR
+        uses: actions/download-artifact@v4
+        with:
+          name: train-ticket-war
+          path: deployment
+
+      - name: Rename WAR
+        run: |
+          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          mv "$WAR_FILE" deployment/train-ticket-reservation.war
+
+      - name: Deploy WAR to PRE-PRODUCTION Tomcat
+        env:
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
+        run: |
+          set -e
+
+          echo "========================================="
+          echo "Deploying Train Ticket Reservation"
+          echo "to PRE-PRODUCTION"
+          echo "========================================="
+
+          echo "Tomcat Host: $TOMCAT_HOST"
+
+          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T deployment/train-ticket-reservation.war \
+            "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
+
+          echo "PRE-PRODUCTION deployment completed successfully."
+
+
+  # ==========================================================
   # PRODUCTION
-  # ============================================================
-
-  deploy-prod:
-    name: Deploy PROD
-    needs: deploy-qa
-
+  # ==========================================================
+  deploy-production:
+    name: Deploy to PRODUCTION
+    needs: deploy-pre-production
     if: |
-      github.ref == 'refs/heads/master' ||
-      (
-        github.event_name == 'workflow_dispatch' &&
-        github.event.inputs.environment == 'prod'
-      )
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.environment == 'production'
 
     runs-on: ubuntu-latest
 
     environment:
-      name: prod
+      name: production
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: train-ticket-reservation-war
+          name: train-ticket-war
+          path: deployment
 
-      - name: Install sshpass
+      - name: Rename WAR
         run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+          WAR_FILE=$(find deployment -name "*.war" | head -1)
+          mv "$WAR_FILE" deployment/train-ticket-reservation.war
 
-      - name: Deploy to PROD Tomcat
+      - name: Deploy WAR to PRODUCTION Tomcat
         env:
-          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
-          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
-          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
-
+          TOMCAT_USER: ${{ secrets.tomcat_user }}
+          TOMCAT_PASSWORD: ${{ secrets.tomcat_password }}
+          TOMCAT_HOST: ${{ secrets.tomcat_host }}
         run: |
-
           set -e
 
           echo "========================================="
-          echo "Deploying to PROD"
+          echo "Deploying Train Ticket Reservation"
+          echo "to PRODUCTION"
           echo "========================================="
 
-          WAR_FILE=$(find . -maxdepth 1 -name "*.war" | head -1)
+          echo "Tomcat Host: $TOMCAT_HOST"
 
-          if [ -z "$WAR_FILE" ]; then
-            echo "ERROR: WAR file not found"
-            exit 1
-          fi
+          curl -f -u "$TOMCAT_USER:$TOMCAT_PASSWORD" \
+            -T deployment/train-ticket-reservation.war \
+            "http://$TOMCAT_HOST:8080/manager/text/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "Testing SSH connection..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" \
-            "echo SSH connection successful"
-
-          echo "Copying WAR..."
-
-          sshpass -p "$TOMCAT_PASSWORD" scp \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$WAR_FILE" \
-            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
-
-          echo "Deploying WAR..."
-
-          sshpass -p "$TOMCAT_PASSWORD" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            "$TOMCAT_USER@$TOMCAT_HOST" << 'EOF'
-
-            set -e
-
-            sudo systemctl stop tomcat || true
-
-            sudo rm -rf /opt/tomcat/webapps/train-ticket-reservation
-
-            sudo rm -f /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo mv \
-              /tmp/train-ticket-reservation.war \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo chown tomcat:tomcat \
-              /opt/tomcat/webapps/train-ticket-reservation.war
-
-            sudo systemctl start tomcat
-
-            sleep 10
-
-            sudo systemctl status tomcat --no-pager
-
-          EOF
-
-          echo "PROD deployment completed successfully."
+          echo "PRODUCTION deployment completed successfully."
+```
