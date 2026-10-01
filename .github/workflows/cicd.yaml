@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+
 permissions:
   contents: read
 
@@ -30,9 +31,10 @@ jobs:
 
       - name: Build and Test
         run: |
+          set -e
           mvn -B clean package
 
-      - name: Find and Prepare WAR
+      - name: Find WAR
         run: |
           set -e
 
@@ -52,10 +54,9 @@ jobs:
 
           cp "$WAR" artifact/train-ticket-reservation.war
 
-          echo "Prepared WAR:"
           ls -lh artifact/train-ticket-reservation.war
 
-      - name: Upload WAR Artifact
+      - name: Upload WAR
         uses: actions/upload-artifact@v4
         with:
           name: train-ticket-war
@@ -89,56 +90,56 @@ jobs:
 
       - name: Deploy to DEV
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          SSHPASS: ${{ secrets.EC2_PASSWORD }}
-        shell: bash
+          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
+          SSHPASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
           set -e
 
           echo "========================================="
-          echo "Deploying Train Ticket Reservation to DEV"
+          echo "Deploying to DEV"
           echo "========================================="
 
-          echo "Copying WAR to EC2..."
+          echo "Copying WAR to Tomcat server..."
 
           sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
-            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
+            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
 
           echo "WAR copied successfully."
 
-          echo "Connecting to EC2..."
+          echo "Deploying WAR to Tomcat..."
 
           sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
-            "$EC2_USER@$EC2_HOST" \
-            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+            "$TOMCAT_USER@$TOMCAT_HOST" \
+            'bash -s' <<'EOF'
 
           set -e
 
           echo "Stopping Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
+          sudo systemctl stop tomcat10
 
-          echo "Removing old deployment..."
+          echo "Removing old application..."
 
-          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
-            /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "$SUDO_PASSWORD" | sudo -S rm -f \
-            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          echo "Copying new WAR..."
 
-          echo "Installing new WAR..."
-
-          echo "$SUDO_PASSWORD" | sudo -S cp \
+          sudo cp \
             /tmp/train-ticket-reservation.war \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Starting Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+          sudo systemctl start tomcat10
 
           echo "Waiting for application..."
 
@@ -148,20 +149,17 @@ jobs:
               http://localhost:8080/train-ticket-reservation/ \
               > /dev/null
             then
-              echo "========================================="
-              echo "DEV deployment successful"
-              echo "========================================="
+              echo "DEV deployment successful."
               exit 0
             fi
 
-            echo "Waiting for Tomcat... attempt $i/12"
-
+            echo "Waiting for application... $i/12"
             sleep 5
           done
 
-          echo "DEV health check failed."
+          echo "DEV deployment failed."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+          sudo systemctl status tomcat10 --no-pager || true
 
           exit 1
 
@@ -194,54 +192,52 @@ jobs:
 
       - name: Deploy to TEST
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          SSHPASS: ${{ secrets.EC2_PASSWORD }}
-        shell: bash
+          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
+          SSHPASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
           set -e
 
           echo "========================================="
-          echo "Deploying Train Ticket Reservation to TEST"
+          echo "Deploying to TEST"
           echo "========================================="
 
-          echo "Copying WAR to EC2..."
-
           sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
-            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
+            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
 
           echo "WAR copied successfully."
 
           sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
-            "$EC2_USER@$EC2_HOST" \
-            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+            "$TOMCAT_USER@$TOMCAT_HOST" \
+            'bash -s' <<'EOF'
 
           set -e
 
           echo "Stopping Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
+          sudo systemctl stop tomcat10
 
-          echo "Removing old deployment..."
+          echo "Removing old application..."
 
-          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
-            /var/lib/tomcat10/webapps/train-ticket-reservation
-
-          echo "$SUDO_PASSWORD" | sudo -S rm -f \
-            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Installing new WAR..."
 
-          echo "$SUDO_PASSWORD" | sudo -S cp \
+          sudo cp \
             /tmp/train-ticket-reservation.war \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Starting Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+          sudo systemctl start tomcat10
 
           echo "Waiting for application..."
 
@@ -251,20 +247,17 @@ jobs:
               http://localhost:8080/train-ticket-reservation/ \
               > /dev/null
             then
-              echo "========================================="
-              echo "TEST deployment successful"
-              echo "========================================="
+              echo "TEST deployment successful."
               exit 0
             fi
 
-            echo "Waiting for Tomcat... attempt $i/12"
-
+            echo "Waiting for application... $i/12"
             sleep 5
           done
 
-          echo "TEST health check failed."
+          echo "TEST deployment failed."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+          sudo systemctl status tomcat10 --no-pager || true
 
           exit 1
 
@@ -297,54 +290,52 @@ jobs:
 
       - name: Deploy to PRE-PROD
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          SSHPASS: ${{ secrets.EC2_PASSWORD }}
-        shell: bash
+          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
+          SSHPASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
           set -e
 
           echo "========================================="
-          echo "Deploying Train Ticket Reservation to PRE-PROD"
+          echo "Deploying to PRE-PROD"
           echo "========================================="
 
-          echo "Copying WAR to EC2..."
-
           sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
-            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
+            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
 
           echo "WAR copied successfully."
 
           sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
-            "$EC2_USER@$EC2_HOST" \
-            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+            "$TOMCAT_USER@$TOMCAT_HOST" \
+            'bash -s' <<'EOF'
 
           set -e
 
           echo "Stopping Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
+          sudo systemctl stop tomcat10
 
-          echo "Removing old deployment..."
+          echo "Removing old application..."
 
-          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
-            /var/lib/tomcat10/webapps/train-ticket-reservation
-
-          echo "$SUDO_PASSWORD" | sudo -S rm -f \
-            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Installing new WAR..."
 
-          echo "$SUDO_PASSWORD" | sudo -S cp \
+          sudo cp \
             /tmp/train-ticket-reservation.war \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Starting Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+          sudo systemctl start tomcat10
 
           echo "Waiting for application..."
 
@@ -354,20 +345,17 @@ jobs:
               http://localhost:8080/train-ticket-reservation/ \
               > /dev/null
             then
-              echo "========================================="
-              echo "PRE-PROD deployment successful"
-              echo "========================================="
+              echo "PRE-PROD deployment successful."
               exit 0
             fi
 
-            echo "Waiting for Tomcat... attempt $i/12"
-
+            echo "Waiting for application... $i/12"
             sleep 5
           done
 
-          echo "PRE-PROD health check failed."
+          echo "PRE-PROD deployment failed."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+          sudo systemctl status tomcat10 --no-pager || true
 
           exit 1
 
@@ -400,54 +388,52 @@ jobs:
 
       - name: Deploy to PRODUCTION
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          SSHPASS: ${{ secrets.EC2_PASSWORD }}
-        shell: bash
+          TOMCAT_HOST: ${{ secrets.TOMCAT_HOST }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
+          SSHPASS: ${{ secrets.TOMCAT_PASSWORD }}
         run: |
           set -e
 
           echo "========================================="
-          echo "Deploying Train Ticket Reservation to PRODUCTION"
+          echo "Deploying to PRODUCTION"
           echo "========================================="
 
-          echo "Copying WAR to EC2..."
-
           sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
             artifact/train-ticket-reservation.war \
-            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
+            "$TOMCAT_USER@$TOMCAT_HOST:/tmp/train-ticket-reservation.war"
 
           echo "WAR copied successfully."
 
           sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
             -o StrictHostKeyChecking=no \
-            "$EC2_USER@$EC2_HOST" \
-            "SUDO_PASSWORD='$SSHPASS' bash -s" <<'EOF'
+            "$TOMCAT_USER@$TOMCAT_HOST" \
+            'bash -s' <<'EOF'
 
           set -e
 
           echo "Stopping Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl stop tomcat10
+          sudo systemctl stop tomcat10
 
-          echo "Removing old deployment..."
+          echo "Removing old application..."
 
-          echo "$SUDO_PASSWORD" | sudo -S rm -rf \
-            /var/lib/tomcat10/webapps/train-ticket-reservation
-
-          echo "$SUDO_PASSWORD" | sudo -S rm -f \
-            /var/lib/tomcat10/webapps/train-ticket-reservation.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Installing new WAR..."
 
-          echo "$SUDO_PASSWORD" | sudo -S cp \
+          sudo cp \
             /tmp/train-ticket-reservation.war \
             /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
           echo "Starting Tomcat..."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl start tomcat10
+          sudo systemctl start tomcat10
 
           echo "Waiting for application..."
 
@@ -457,20 +443,17 @@ jobs:
               http://localhost:8080/train-ticket-reservation/ \
               > /dev/null
             then
-              echo "========================================="
-              echo "PRODUCTION deployment successful"
-              echo "========================================="
+              echo "PRODUCTION deployment successful."
               exit 0
             fi
 
-            echo "Waiting for Tomcat... attempt $i/12"
-
+            echo "Waiting for application... $i/12"
             sleep 5
           done
 
-          echo "PRODUCTION health check failed."
+          echo "PRODUCTION deployment failed."
 
-          echo "$SUDO_PASSWORD" | sudo -S systemctl status tomcat10 --no-pager || true
+          sudo systemctl status tomcat10 --no-pager || true
 
           exit 1
 
