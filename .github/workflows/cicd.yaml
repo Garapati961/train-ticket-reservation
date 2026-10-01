@@ -1,23 +1,24 @@
-name: International-train-ticket Multi-Environment CI/CD
+
+name: Train-Ticket-Reservation Multi-Environment CI/CD
 
 on:
   push:
     branches:
       - master
+
 permissions:
   contents: read
 
 jobs:
 
-  # ==========================================================
+  # ==================================================
   # BUILD AND TEST
-  # ==========================================================
+  # ==================================================
   build:
     name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout source
         uses: actions/checkout@v4
 
@@ -31,26 +32,27 @@ jobs:
       - name: Build and test
         run: mvn -B clean package
 
-      - name: Verify WAR
+      - name: Prepare WAR
         run: |
-          echo "Checking generated WAR..."
-          test -f target/cinevault.war
-          ls -lh target/cinevault.war
-          echo "WAR created successfully."
+          set -e
+          WAR=$(find target -maxdepth 1 -type f -name '*.war' | head -n 1)
+          test -n "$WAR"
+          mkdir -p artifact
+          cp "$WAR" artifact/train-ticket-reservation.war
+          ls -lh artifact/train-ticket-reservation.war
 
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cinevault-war
-          path: target/cinevault.war
+          name: train-ticket-war
+          path: artifact/train-ticket-reservation.war
           retention-days: 7
 
-
-  # ==========================================================
+  # ==================================================
   # DEV
-  # ==========================================================
+  # ==================================================
   deploy-dev:
-    name: Deploy → DEV
+    name: Deploy to DEV
     needs: build
     runs-on: ubuntu-latest
 
@@ -58,81 +60,71 @@ jobs:
       name: dev
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
+          name: train-ticket-war
           path: artifact
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Install sshpass
         run: |
-          set -e
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
           mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to DEV
-        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSHPASS: ${{ secrets.EC2_PASSWORD }}
         run: |
           set -e
 
-          echo "Deploying CineVault to DEV..."
+          echo "Deploying to DEV..."
 
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
+          sshpass -e scp \
+            -o StrictHostKeyChecking=yes \
+            artifact/train-ticket-reservation.war \
+            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
           set -e
 
-          echo "Stopping Tomcat..."
           sudo systemctl stop tomcat10
 
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
+          sudo cp /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Starting Tomcat..."
           sudo systemctl start tomcat10
 
-          echo "Waiting for application..."
           for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "DEV application is responding."
+            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+              echo "DEV deployment successful"
               exit 0
             fi
-
             sleep 5
           done
 
-          echo "DEV deployment health check failed."
           sudo systemctl status tomcat10 --no-pager || true
-
           exit 1
-
           EOF
 
-
-  # ==========================================================
+  # ==================================================
   # TEST
-  # ==========================================================
+  # ==================================================
   deploy-test:
-    name: Deploy → TEST
+    name: Deploy to TEST
     needs: deploy-dev
     runs-on: ubuntu-latest
 
@@ -140,81 +132,71 @@ jobs:
       name: test
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
+          name: train-ticket-war
           path: artifact
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Install sshpass
         run: |
-          set -e
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
           mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to TEST
-        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSHPASS: ${{ secrets.EC2_PASSWORD }}
         run: |
           set -e
 
-          echo "Deploying CineVault to TEST..."
+          echo "Deploying to TEST..."
 
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
+          sshpass -e scp \
+            -o StrictHostKeyChecking=yes \
+            artifact/train-ticket-reservation.war \
+            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
           set -e
 
-          echo "Stopping Tomcat..."
           sudo systemctl stop tomcat10
 
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
+          sudo cp /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Starting Tomcat..."
           sudo systemctl start tomcat10
 
-          echo "Waiting for application..."
           for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "TEST application is responding."
+            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+              echo "TEST deployment successful"
               exit 0
             fi
-
             sleep 5
           done
 
-          echo "TEST deployment health check failed."
           sudo systemctl status tomcat10 --no-pager || true
-
           exit 1
-
           EOF
 
-
-  # ==========================================================
+  # ==================================================
   # PRE-PRODUCTION
-  # ==========================================================
+  # ==================================================
   deploy-preprod:
-    name: Deploy → PRE-PROD
+    name: Deploy to PRE-PROD
     needs: deploy-test
     runs-on: ubuntu-latest
 
@@ -222,81 +204,71 @@ jobs:
       name: pre-production
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
+          name: train-ticket-war
           path: artifact
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Install sshpass
         run: |
-          set -e
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
           mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to PRE-PROD
-        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSHPASS: ${{ secrets.EC2_PASSWORD }}
         run: |
           set -e
 
-          echo "Deploying CineVault to PRE-PROD..."
+          echo "Deploying to PRE-PROD..."
 
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
+          sshpass -e scp \
+            -o StrictHostKeyChecking=yes \
+            artifact/train-ticket-reservation.war \
+            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
           set -e
 
-          echo "Stopping Tomcat..."
           sudo systemctl stop tomcat10
 
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
+          sudo cp /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Starting Tomcat..."
           sudo systemctl start tomcat10
 
-          echo "Waiting for application..."
           for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "PRE-PROD application is responding."
+            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+              echo "PRE-PROD deployment successful"
               exit 0
             fi
-
             sleep 5
           done
 
-          echo "PRE-PROD deployment health check failed."
           sudo systemctl status tomcat10 --no-pager || true
-
           exit 1
-
           EOF
 
-
-  # ==========================================================
+  # ==================================================
   # PRODUCTION
-  # ==========================================================
+  # ==================================================
   deploy-production:
-    name: Deploy → PRODUCTION
+    name: Deploy to PRODUCTION
     needs: deploy-preprod
     runs-on: ubuntu-latest
 
@@ -304,70 +276,62 @@ jobs:
       name: production
 
     steps:
-
       - name: Download WAR
         uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
+          name: train-ticket-war
           path: artifact
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Install sshpass
         run: |
-          set -e
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
           mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
       - name: Deploy to PRODUCTION
-        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSHPASS: ${{ secrets.EC2_PASSWORD }}
         run: |
           set -e
 
-          echo "Deploying CineVault to PRODUCTION..."
+          echo "Deploying to PRODUCTION..."
 
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
+          sshpass -e scp \
+            -o StrictHostKeyChecking=yes \
+            artifact/train-ticket-reservation.war \
+            "$EC2_USER@$EC2_HOST:/tmp/train-ticket-reservation.war"
 
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'EOF'
           set -e
 
-          echo "Stopping Tomcat..."
           sudo systemctl stop tomcat10
 
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
+          sudo rm -rf /var/lib/tomcat10/webapps/train-ticket-reservation
+          sudo rm -f /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
+          sudo cp /tmp/train-ticket-reservation.war \
+            /var/lib/tomcat10/webapps/train-ticket-reservation.war
 
-          echo "Starting Tomcat..."
           sudo systemctl start tomcat10
 
-          echo "Waiting for application..."
           for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "PRODUCTION application is responding."
+            if curl -fsS http://localhost:8080/train-ticket-reservation/ > /dev/null; then
+              echo "PRODUCTION deployment successful"
               exit 0
             fi
-
             sleep 5
           done
-          echo "PRODUCTION deployment health check failed."
+
           sudo systemctl status tomcat10 --no-pager || true
-
           exit 1
-
           EOF
