@@ -1,73 +1,330 @@
-name: CI/CD Pipeline with SonarQube
+name: ReleasePulse CI/CD
 
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
 
-  build:
+  # ==========================================================
+  # 1. BUILD AND TEST
+  # ==========================================================
 
+  build:
+    name: Build and Test
     runs-on: ubuntu-latest
 
     steps:
 
-      # 1. Checkout Source Code
-      - name: Checkout Source
+      - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2. Setup Java 17
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: maven
 
-      # 3. Validate
-      - name: Validate
-        run: mvn validate
-
-      # 4. Compile
-      - name: Compile
-        run: mvn compile
-
-      # 5. Test
-      - name: Test
-        run: mvn test
-
-      # 6. Package
-      - name: Package
-        run: mvn package
-
-      # 7. Verify WAR
-      - name: Verify WAR
+      - name: Build and Test
         run: |
-          echo "Generated files:"
+          mvn -B clean verify
+
+      - name: Upload WAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: releasepulse-war
+          path: target/releasepulse.war
+
+
+  # ==========================================================
+  # 2. SONARQUBE ANALYSIS
+  # ==========================================================
+
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Test SonarQube connection
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          echo "Testing SonarQube connection..."
+
+          curl -f "${SONAR_HOST_URL}/api/system/status"
+
+          echo
+          echo "SonarQube connection successful."
+
+      - name: SonarQube Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          mvn -B clean verify \
+            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.projectKey=releasepulse \
+            -Dsonar.projectName=ReleasePulse \
+            -Dsonar.host.url="${SONAR_HOST_URL}" \
+            -Dsonar.token="${SONAR_TOKEN}"
+
+      - name: Verify SonarQube scanner report
+        run: |
+          echo "Checking SonarQube scanner output..."
+
+          REPORT_FILE="target/sonar/report-task.txt"
+
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "ERROR: SonarQube report-task.txt was not created."
+            echo
+            echo "Current directory:"
+            pwd
+            echo
+            echo "Directory contents:"
+            ls -la
+            echo
+            echo "Searching for report-task.txt:"
+            find . -type f -name "report-task.txt" -print
+            exit 1
+          fi
+
+          echo "SonarQube scanner report found:"
+          echo "$REPORT_FILE"
+          echo
+
+          cat "$REPORT_FILE"
+
+      - name: Wait for SonarQube Quality Gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          set -e
+
+          REPORT_FILE="target/sonar/report-task.txt"
+
+          CE_TASK_ID=$(grep '^ceTaskId=' "$REPORT_FILE" | cut -d'=' -f2)
+
+          if [ -z "$CE_TASK_ID" ]; then
+            echo "ERROR: Could not find ceTaskId in SonarQube report."
+            exit 1
+          fi
+
+          echo "SonarQube task ID: $CE_TASK_ID"
+
+          STATUS=""
+
+          for i in {1..60}; do
+
+            RESPONSE=$(curl -s \
+              -u "${SONAR_TOKEN}:" \
+              "${SONAR_HOST_URL}/api/ce/task?id=${CE_TASK_ID}")
+
+            STATUS=$(echo "$RESPONSE" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+
+            echo "SonarQube processing status: $STATUS"
+
+            if [ "$STATUS" = "SUCCESS" ]; then
+              break
+            fi
+
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELED" ]; then
+              echo "SonarQube analysis failed."
+              echo "$RESPONSE"
+              exit 1
+            fi
+
+            sleep 5
+
+          done
+
+          if [ "$STATUS" != "SUCCESS" ]; then
+            echo "ERROR: SonarQube analysis did not finish successfully."
+            exit 1
+          fi
+
+          echo
+          echo "Checking SonarQube Quality Gate..."
+
+          QUALITY_GATE=$(curl -s \
+            -u "${SONAR_TOKEN}:" \
+            "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=releasepulse")
+
+          echo "$QUALITY_GATE"
+
+          GATE_STATUS=$(echo "$QUALITY_GATE" | sed -n 's/.*"projectStatus":{"status":"\([^"]*\)".*/\1/p')
+
+          echo
+          echo "Quality Gate Status: $GATE_STATUS"
+
+          if [ "$GATE_STATUS" != "OK" ]; then
+            echo "ERROR: SonarQube Quality Gate failed."
+            exit 1
+          fi
+
+          echo "SonarQube Quality Gate passed."
+
+
+  # ==========================================================
+  # 3. UPLOAD WAR TO NEXUS
+  # ==========================================================
+
+  nexus:
+    name: Upload WAR to Nexus
+    runs-on: ubuntu-latest
+    needs: sonarqube
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: releasepulse-war
+          path: target
+
+      - name: Verify WAR file
+        run: |
+          echo "Checking WAR file..."
+
           ls -lh target/
 
-      
+          test -f target/releasepulse.war
 
-      # 9. Configure Maven settings.xml for Nexus
-      - name: Configure Maven settings.xml for Nexus
+          echo "WAR file found."
+
+      - name: Upload WAR to Nexus
+        env:
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
-          mkdir -p ~/.m2
+          mvn -B deploy:deploy-file \
+            -Dfile=target/releasepulse.war \
+            -DgroupId=com.releasepulse \
+            -DartifactId=releasepulse \
+            -Dversion=1.0.0 \
+            -Dpackaging=war \
+            -DrepositoryId=nexus-releases \
+            -Durl=http://3.237.61.86:8081/repository/releasepulse-releases/ \
+            --settings settings.xml
 
-          cat <<EOF > ~/.m2/settings.xml
-          <settings>
-            <servers>
-              <server>
-                <id>nexus</id>
-                <username>${{ secrets.NEXUS_USERNAME }}</username>
-                <password>${{ secrets.NEXUS_PASSWORD }}</password>
-              </server>
-            </servers>
-          </settings>
-          EOF
 
-      # 10. Deploy WAR to Nexus
-      - name: Upload Artifact to Nexus
+  # ==========================================================
+  # 4. DEPLOY TO TOMCAT
+  # ==========================================================
+
+  deploy:
+    name: Deploy to Tomcat
+    runs-on: ubuntu-latest
+    needs: nexus
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Download WAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: releasepulse-war
+          path: target
+
+      - name: Verify WAR file
         run: |
-          mvn deploy \
-            -DaltDeploymentRepository=nexus::default::${{ secrets.NEXUS_REPO_URL }}
+          echo "Checking WAR file..."
+
+          ls -lh target/
+
+          test -f target/releasepulse.war
+
+          echo "WAR file found."
+
+      - name: Test Tomcat connection
+        env:
+          TOMCAT_HOST: ${{ secrets.TOMCAT_URL }}
+        run: |
+          echo "Testing Tomcat connection..."
+
+          if [ -z "$TOMCAT_URL" ]; then
+            echo "ERROR: TOMCAT_URL secret is empty."
+            exit 1
+          fi
+
+          echo "Tomcat host: ${TOMCAT_URL}"
+
+          curl -f \
+            "http://${TOMCAT_HOST}:8080/"
+
+          echo
+          echo "Tomcat connection successful."
+
+      - name: Deploy WAR to Tomcat
+        env:
+          TOMCAT_HOST: ${{ secrets.TOMCAT_URL }}
+          TOMCAT_USERNAME: ${{ secrets.TOMCAT_USER }}
+          TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
+        run: |
+          echo "Deploying ReleasePulse to Tomcat..."
+
+          if [ -z "$TOMCAT_URL" ]; then
+            echo "ERROR: TOMCAT_URL secret is empty."
+            exit 1
+          fi
+
+          if [ -z "$TOMCAT_USER" ]; then
+            echo "ERROR: TOMCAT_USER secret is empty."
+            exit 1
+          fi
+
+          if [ -z "$TOMCAT_PASSWORD" ]; then
+            echo "ERROR: TOMCAT_PASSWORD secret is empty."
+            exit 1
+          fi
+
+          echo "Tomcat host configured: ${TOMCAT_URL}"
+          echo "Tomcat username configured."
+
+          curl -f \
+            -u "${TOMCAT_USER}:${TOMCAT_PASSWORD}" \
+            -T target/releasepulse.war \
+            "http://${TOMCAT_URL}:8080/manager/text/deploy?path=/releasepulse&update=true"
+
+          echo
+          echo "Deployment completed successfully."
+
+      - name: Verify deployment
+        env:
+          TOMCAT_HOST: ${{ secrets.TOMCAT_URL }}
+        run: |
+          echo "Waiting for ReleasePulse to start..."
+
+          sleep 10
+
+          curl -f \
+            "http://${TOMCAT_URL}:8080/releasepulse/"
+
+          echo
+          echo "ReleasePulse deployment verified successfully."
