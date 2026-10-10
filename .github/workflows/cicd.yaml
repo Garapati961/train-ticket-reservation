@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload WAR to Nexus
         env:
-          NEXUS_REPO_URL: ${{ secrets.NEXUS_REPO_URL }}
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
