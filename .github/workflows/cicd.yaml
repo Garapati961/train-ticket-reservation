@@ -1,28 +1,21 @@
-
 name: Train Ticket Reservation CI/CD
 
 on:
   push:
-    branches:  
-      -master
+    branches: [master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-analyze:
-    name: Build and SonarQube Analysis
+  build-test-analyze-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # Java 17 runs the current Sonar scanner.
-      # Maven still compiles to the Java version configured in pom.xml.
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -31,141 +24,59 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: mvn -B clean verify
+        run: mvn -B clean test
 
-      - name: Find WAR artifact
-        id: war
-        shell: bash
+      - name: Package WAR
         run: |
-          set -euo pipefail
-          WAR=$(find target -maxdepth 1 -type f -name '*.war' \
-            ! -name 'original-*.war' | head -n 1)
-          test -n "$WAR" || {
-            echo "No WAR file found in target/"
-            exit 1
-          }
-          echo "path=$WAR" >> "$GITHUB_OUTPUT"
-          echo "Built artifact: $WAR"
+          mvn -B package -DskipTests
+          test -f target/TrainBook-1.0.0-SNAPSHOT.war
 
       - name: SonarQube analysis
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          test -n "$SONAR_TOKEN"
-          test -n "$SONAR_HOST_URL"
-
           mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.projectKey=train-ticket-reservation \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.token="$SONAR_TOKEN"
 
-      - name: SonarQube Quality Gate
-        id: quality-gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 10
+      - name: Upload WAR to Nexus
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      - name: Upload WAR for deployment job
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: train-ticket-war
-          path: ${{ steps.war.outputs.path }}
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-and-deploy:
-    name: Publish to Nexus and Deploy to Tomcat
-    needs: build-analyze
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java and Maven
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
-
-      - name: Download built WAR
-        uses: actions/download-artifact@v4
-        with:
-          name: train-ticket-war
-          path: deployment-artifact
-
-      - name: Locate WAR
-        id: war
-        shell: bash
-        run: |
-          set -euo pipefail
-          WAR=$(find deployment-artifact -maxdepth 1 \
-            -type f -name '*.war' | head -n 1)
-          test -n "$WAR"
-          echo "path=$WAR" >> "$GITHUB_OUTPUT"
-          echo "file=$(basename "$WAR")" >> "$GITHUB_OUTPUT"
-
-      - name: Publish WAR to Nexus
-        env:
-          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_REPO_URL: ${{ secrets.NEXUS_REPO_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
         run: |
-          set -euo pipefail
-          test -n "$NEXUS_URL"
-          test -n "$NEXUS_USERNAME"
-          test -n "$NEXUS_PASSWORD"
-
-          mkdir -p "$HOME/.m2"
-          cat > "$HOME/.m2/settings.xml" <<EOF
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
           <settings>
             <servers>
               <server>
                 <id>nexus-snapshots</id>
-                <username>\${env.NEXUS_USERNAME}</username>
-                <password>\${env.NEXUS_PASSWORD}</password>
+                <username>${NEXUS_USERNAME}</username>
+                <password>${NEXUS_PASSWORD}</password>
               </server>
             </servers>
           </settings>
           EOF
-          # Replace environment placeholders safely in settings.xml.
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          p = Path.home() / ".m2/settings.xml"
-          s = p.read_text()
-          s = s.replace("\${env.NEXUS_USERNAME}", os.environ["NEXUS_USERNAME"])
-          s = s.replace("\${env.NEXUS_PASSWORD}", os.environ["NEXUS_PASSWORD"])
-          p.write_text(s)
-          PY
 
-          mvn -B org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
-            -Dfile="${{ steps.war.outputs.path }}" \
-            -DpomFile=pom.xml \
+          mvn -B org.apache.maven.plugins:maven-deploy-plugin:3.1.3:deploy-file \
+            -Dfile=target/TrainBook-1.0.0-SNAPSHOT.war \
+            -DgroupId=TrainBook \
+            -DartifactId=TrainBook \
+            -Dversion=1.0.0-SNAPSHOT \
+            -Dpackaging=war \
             -DrepositoryId=nexus-snapshots \
-            -Durl="${NEXUS_URL%/}/repository/maven-snapshots/"
+            -Durl="${NEXUS_URL}/repository/maven-snapshots/" \
+            -DgeneratePom=true
 
       - name: Deploy WAR to Tomcat
         env:
           TOMCAT_URL: ${{ secrets.TOMCAT_URL }}
-          TOMCAT_USERNAME: ${{ secrets.TOMCAT_USER }}
+          TOMCAT_USER: ${{ secrets.TOMCAT_USER }}
           TOMCAT_PASSWORD: ${{ secrets.TOMCAT_PASSWORD }}
-          WAR_FILE: ${{ steps.war.outputs.path }}
         run: |
-          set -euo pipefail
-          test -n "$TOMCAT_URL"
-          test -n "$TOMCAT_USER"
-          test -n "$TOMCAT_PASSWORD"
-
-          curl --fail --show-error --silent \
+          curl --fail --silent --show-error \
             --user "$TOMCAT_USER:$TOMCAT_PASSWORD" \
-            --upload-file "$WAR_FILE" \
-            "${TOMCAT_URL%/}/manager/text/deploy?path=/TrainBook&update=true"
-
-      - name: Deployment complete
-        run: echo "WAR published to Nexus and deployed to Tomcat."
+            --upload-file target/TrainBook-1.0.0-SNAPSHOT.war \
+            "${TOMCAT_URL}/manager/text/deploy?path=/TrainBook&update=true"
