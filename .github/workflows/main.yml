@@ -1,5 +1,4 @@
 name: Train Ticket Reservation CI/CD
-
 on:
   push:
     branches:
